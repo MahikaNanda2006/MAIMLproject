@@ -1,0 +1,10 @@
+Feature,F_score,Selected
+Acceleration,3.2978550936861324,True
+Speed,3.0651521022390105,True
+Humidity,2.4848200727539673,True
+Mileage,0.6318228108525634,True
+Engine Size,0.4915830140164826,True
+Wind Speed,0.26273102244706786,False
+Temperature,0.21618520384206089,False
+Age of Vehicle,0.1676167844867337,False
+Air Pressure,0.013909550429143885,False
