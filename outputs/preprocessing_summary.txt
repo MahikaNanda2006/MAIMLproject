@@ -1,0 +1,50 @@
+VEHICLE EMISSION DATA CLEANING & PREPROCESSING SUMMARY
+============================================================
+Input file: vehicle_emission_dataset.csv
+Original rows: 10000
+Original columns: 19
+Final rows: 10000
+Final columns: 19
+Duplicate rows removed: 0
+Missing values before imputation: 0
+Missing values after imputation: 0
+Outlier capping enabled: False
+
+Categorical columns:
+  - Vehicle Type
+  - Fuel Type
+  - Road Type
+  - Traffic Conditions
+
+Numerical columns:
+  - Engine Size
+  - Age of Vehicle
+  - Mileage
+  - Speed
+  - Acceleration
+  - Temperature
+  - Humidity
+  - Wind Speed
+  - Air Pressure
+  - CO2 Emissions
+  - NOx Emissions
+  - PM2.5 Emissions
+  - VOC Emissions
+  - SO2 Emissions
+
+Target:
+  - Emission Level
+  - Low = 0
+  - Medium = 1
+  - High = 2
+
+Imputation performed:
+  - No missing values required imputation.
+
+Output files:
+  - cleaned_vehicle_emission_dataset.csv
+  - processed_vehicle_emission_dataset.csv
+  - feature_data.csv
+  - target.csv
+  - outlier_report.csv
+  - preprocessing_summary.txt
