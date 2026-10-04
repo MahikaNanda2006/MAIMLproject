@@ -1,7 +1,7 @@
 """
-data_cleaning_preprocessing.py
+data_cleaning.py
 
-Data cleaning and preprocessing pipeline for vehicle emission analysis.
+Data cleaning pipeline for vehicle emission analysis.
 
 Input:
     vehicle_emission_dataset.csv
@@ -9,41 +9,29 @@ Input:
 Outputs:
     outputs/
         cleaned_vehicle_emission_dataset.csv
-        processed_vehicle_emission_dataset.csv
-        feature_data.csv
-        target.csv
         outlier_report.csv
-        preprocessing_summary.txt
+        cleaning_summary.txt
 
 The pipeline:
 1. Loads the raw CSV.
 2. Cleans column names and categorical text.
 3. Converts numeric columns safely.
 4. Replaces invalid/infinite values with NaN.
-5. Handles missing values (median for numeric, mode for categorical).
-6. Removes exact duplicate rows.
-7. Performs basic domain/range validation.
+5. Removes exact duplicate rows.
+6. Performs basic domain/range validation.
+7. Handles missing values (median for numeric, mode for categorical).
 8. Generates an IQR-based outlier report.
-9. Optionally caps numerical outliers (disabled by default).
-10. One-hot encodes categorical predictors.
-11. Standardizes numerical predictors.
-12. Encodes Emission Level as an ordinal target:
-        Low = 0, Medium = 1, High = 2
 
 Important:
-- Outliers are NOT deleted by default. Emission data can naturally contain
-  unusual observations, so the script reports them instead.
+- Outliers are NOT deleted or modified. Emission data can naturally contain
+  unusual observations, so the script only reports them.
 - The cleaned dataset is kept in human-readable form.
-- The processed dataset is suitable for numerical/categorical modelling.
 """
 
 from pathlib import Path
-import warnings
 
 import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
 # ============================================================
@@ -55,11 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 INPUT_FILE = BASE_DIR / "vehicle_emission_dataset.csv"
 OUTPUT_DIR = BASE_DIR / "outputs"
 
-# Set this to True only if your analysis/model specifically requires
-# outlier capping. By default, unusual observations are preserved.
-CAP_OUTLIERS = False
-
-# IQR multiplier used for outlier detection/capping.
+# IQR multiplier used for outlier detection.
 IQR_MULTIPLIER = 1.5
 
 TARGET_COLUMN = "Emission Level"
@@ -168,7 +152,8 @@ def convert_numeric_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFram
 
     for col in columns:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+            # float64 so integer columns (Age, Mileage) match the cleaned output
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
 
     return df
 
@@ -289,121 +274,6 @@ def create_outlier_report(
     return pd.DataFrame(records)
 
 
-def cap_outliers(
-    df: pd.DataFrame,
-    numeric_columns: list[str],
-    multiplier: float = 1.5,
-) -> pd.DataFrame:
-    """Cap numerical values at IQR bounds (winsorization-style)."""
-    df = df.copy()
-
-    for col in numeric_columns:
-        if col not in df.columns:
-            continue
-
-        q1 = df[col].quantile(0.25)
-        q3 = df[col].quantile(0.75)
-        iqr = q3 - q1
-
-        lower_bound = q1 - multiplier * iqr
-        upper_bound = q3 + multiplier * iqr
-
-        df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
-
-    return df
-
-
-def make_preprocessed_data(
-    df: pd.DataFrame,
-    categorical_columns: list[str],
-    numerical_columns: list[str],
-    target_column: str,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    One-hot encode categorical predictors and standardize numerical predictors.
-
-    Returns:
-        processed_features: encoded + scaled predictor matrix
-        encoded_target: ordinal target as 0/1/2
-    """
-    feature_columns = [
-        col for col in categorical_columns + numerical_columns
-        if col in df.columns
-    ]
-
-    X = df[feature_columns].copy()
-
-    # One-hot encode categorical variables.
-    # handle_unknown='ignore' prevents errors when future data contains
-    # a category not present in the original dataset.
-    try:
-        encoder = OneHotEncoder(
-            handle_unknown="ignore",
-            sparse_output=False,
-            dtype=np.float64,
-        )
-    except TypeError:
-        # Compatibility with older scikit-learn versions.
-        encoder = OneHotEncoder(
-            handle_unknown="ignore",
-            sparse=False,
-            dtype=np.float64,
-        )
-
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("numeric", StandardScaler(), [
-                col for col in numerical_columns if col in X.columns
-            ]),
-            ("categorical", encoder, [
-                col for col in categorical_columns if col in X.columns
-            ]),
-        ],
-        remainder="drop",
-    )
-
-    processed_array = preprocessor.fit_transform(X)
-
-    feature_names = preprocessor.get_feature_names_out()
-
-    processed_features = pd.DataFrame(
-        processed_array,
-        columns=feature_names,
-        index=df.index,
-    )
-
-    # Keep the target separate from the predictors.
-    # This avoids accidentally leaking the target into feature preprocessing.
-    target_mapping = {
-        "Low": 0,
-        "Medium": 1,
-        "High": 2,
-    }
-
-    encoded_target = (
-        df[target_column]
-        .map(target_mapping)
-        .rename(target_column)
-        .to_frame()
-    )
-
-    # If unexpected target labels exist, preserve them as missing rather
-    # than silently assigning an incorrect numerical value.
-    if encoded_target[target_column].isna().any():
-        unknown_targets = sorted(
-            df.loc[
-                encoded_target[target_column].isna(),
-                target_column
-            ].astype(str).unique()
-        )
-        warnings.warn(
-            f"Unexpected target labels found: {unknown_targets}. "
-            "Their encoded values will be NaN."
-        )
-
-    return processed_features, encoded_target
-
-
 # ============================================================
 # MAIN PIPELINE
 # ============================================================
@@ -419,7 +289,7 @@ def main() -> None:
         )
 
     print("=" * 70)
-    print("VEHICLE EMISSION DATA CLEANING & PREPROCESSING")
+    print("VEHICLE EMISSION DATA CLEANING")
     print("=" * 70)
 
     # --------------------------------------------------------
@@ -485,7 +355,7 @@ def main() -> None:
     missing_after = int(df.isna().sum().sum())
 
     # --------------------------------------------------------
-    # 9. Outlier analysis
+    # 9. Outlier report (observations are not modified)
     # --------------------------------------------------------
     outlier_report = create_outlier_report(
         df,
@@ -498,59 +368,20 @@ def main() -> None:
         index=False,
     )
 
-    # Optional outlier capping.
-    if CAP_OUTLIERS:
-        df = cap_outliers(
-            df,
-            NUMERICAL_COLUMNS,
-            multiplier=IQR_MULTIPLIER,
-        )
-
     # --------------------------------------------------------
-    # 10. Save cleaned human-readable dataset
+    # 10. Save cleaned dataset
     # --------------------------------------------------------
-    cleaned_file = OUTPUT_DIR / "cleaned_vehicle_emission_dataset.csv"
-    df.to_csv(cleaned_file, index=False)
-
-    # --------------------------------------------------------
-    # 11. Encode + scale features
-    # --------------------------------------------------------
-    processed_features, encoded_target = make_preprocessed_data(
-        df,
-        CATEGORICAL_COLUMNS,
-        NUMERICAL_COLUMNS,
-        TARGET_COLUMN,
-    )
-
-    # Combine processed predictors and encoded target.
-    processed_dataset = pd.concat(
-        [
-            processed_features.reset_index(drop=True),
-            encoded_target.reset_index(drop=True),
-        ],
-        axis=1,
-    )
-
-    processed_dataset.to_csv(
-        OUTPUT_DIR / "processed_vehicle_emission_dataset.csv",
+    df.to_csv(
+        OUTPUT_DIR / "cleaned_vehicle_emission_dataset.csv",
         index=False,
-    )
-
-    processed_features.to_csv(
-        OUTPUT_DIR / "feature_data.csv",
-        index=False,
-    )
-
-    encoded_target.to_csv(
-        OUTPUT_DIR / "target.csv",
-        index=False,
+        lineterminator="\r\n",  # Windows-style line endings, as in the reference output
     )
 
     # --------------------------------------------------------
-    # 12. Generate summary report
+    # 11. Generate summary report
     # --------------------------------------------------------
     summary_lines = [
-        "VEHICLE EMISSION DATA CLEANING & PREPROCESSING SUMMARY",
+        "VEHICLE EMISSION DATA CLEANING SUMMARY",
         "=" * 60,
         f"Input file: {INPUT_FILE.name}",
         f"Original rows: {original_rows}",
@@ -560,19 +391,6 @@ def main() -> None:
         f"Duplicate rows removed: {duplicate_count}",
         f"Missing values before imputation: {missing_before}",
         f"Missing values after imputation: {missing_after}",
-        f"Outlier capping enabled: {CAP_OUTLIERS}",
-        "",
-        "Categorical columns:",
-        *[f"  - {col}" for col in CATEGORICAL_COLUMNS],
-        "",
-        "Numerical columns:",
-        *[f"  - {col}" for col in NUMERICAL_COLUMNS],
-        "",
-        "Target:",
-        f"  - {TARGET_COLUMN}",
-        "  - Low = 0",
-        "  - Medium = 1",
-        "  - High = 2",
         "",
         "Imputation performed:",
     ]
@@ -589,25 +407,21 @@ def main() -> None:
             "",
             "Output files:",
             "  - cleaned_vehicle_emission_dataset.csv",
-            "  - processed_vehicle_emission_dataset.csv",
-            "  - feature_data.csv",
-            "  - target.csv",
             "  - outlier_report.csv",
-            "  - preprocessing_summary.txt",
+            "  - cleaning_summary.txt",
         ]
     )
 
-    with open(OUTPUT_DIR / "preprocessing_summary.txt", "w", encoding="utf-8") as f:
+    with open(OUTPUT_DIR / "cleaning_summary.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(summary_lines))
 
     # --------------------------------------------------------
-    # 13. Console summary
+    # 12. Console summary
     # --------------------------------------------------------
     print(f"Rows after cleaning: {len(df)}")
     print(f"Duplicate rows removed: {duplicate_count}")
     print(f"Missing values before imputation: {missing_before}")
     print(f"Missing values after imputation: {missing_after}")
-    print(f"Processed feature shape: {processed_features.shape}")
 
     print("\nOutput files created in:")
     print(OUTPUT_DIR)
