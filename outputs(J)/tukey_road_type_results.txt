@@ -1,0 +1,8 @@
+  Multiple Comparison of Means - Tukey HSD, FWER=0.05  
+=======================================================
+ group1  group2 meandiff p-adj   lower    upper  reject
+-------------------------------------------------------
+   City Highway   -8.634 0.0186 -16.1074 -1.1606   True
+   City   Rural   -2.053 0.7974  -9.5598  5.4538  False
+Highway   Rural    6.581 0.1017  -0.9633 14.1254  False
+-------------------------------------------------------

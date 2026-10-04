@@ -1,0 +1,2 @@
+Comparison,Test,n (Heavy),n (Free flow),Mean (Heavy),Mean (Free flow),t-statistic,p-value,Significant (alpha=0.05)
+Heavy vs Free flow,Welch t-test,3266,3222,274.8339122611919,270.7376309108811,1.2666087699228374,0.2053407284727238,No

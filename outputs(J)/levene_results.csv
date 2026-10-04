@@ -1,0 +1,5 @@
+Categorical Variable,Levene statistic,p-value,Equal variances plausible
+Vehicle Type,1.119422383126193,0.3396689435916812,Yes
+Fuel Type,0.5995695386090988,0.6152316367889075,Yes
+Road Type,0.32559435971407036,0.7221056971751807,Yes
+Traffic Conditions,0.882421234081285,0.4138120667966651,Yes

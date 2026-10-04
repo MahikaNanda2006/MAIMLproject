@@ -1,0 +1,6 @@
+Categorical Variable,Target Variable,F-statistic,p-value,Significant (alpha=0.05)
+Vehicle Type,CO2 Emissions,0.18708087703725618,0.905241983851683,No
+Fuel Type,CO2 Emissions,0.35191325901928316,0.787768671817093,No
+Road Type,CO2 Emissions,3.9842151834330113,0.01863659508952766,Yes
+Traffic Conditions,CO2 Emissions,1.2804214611878257,0.27796571726740166,No
+Emission Level,CO2 Emissions,32684.76727549721,0.0,Yes

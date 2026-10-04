@@ -29,6 +29,7 @@ import pandas as pd                # tables (DataFrames) - reading the CSV
 import matplotlib.pyplot as plt    # drawing graphs
 from scipy import stats            # statistical tests (z-score, t-test, ANOVA...)
 from sklearn.feature_selection import mutual_info_regression  # non-linear dependence
+from statsmodels.stats.multicomp import pairwise_tukeyhsd     # Tukey HSD post-hoc test (needs: pip install statsmodels)
 
 # Show ALL columns when printing a table, and make the console wide
 pd.set_option('display.max_columns', None)
@@ -515,20 +516,281 @@ for col in num_cols:
     ci_rows.append([col, m, lo_ci, hi_ci])
 print(pd.DataFrame(ci_rows, columns=['Variable', 'Mean', 'CI lower', 'CI upper']).round(4).to_string(index=False))
 
-# 7.3 HYPOTHESIS TESTS: does CO2 differ between groups? ----------------------
-# One-way ANOVA: H0 = all group means are equal. p < 0.05 -> some group differs.
-print("\n7.3 One-way ANOVA - is mean CO2 different between groups?")
-for grp in ['Vehicle Type', 'Fuel Type', 'Road Type', 'Traffic Conditions', 'Emission Level']:
-    groups = [g['CO2 Emissions'].values for _, g in df.groupby(grp)]
-    f_stat, p_anova = stats.f_oneway(*groups)
-    print(f"    CO2 by {grp:<19} F = {f_stat:7.3f}   p = {p_anova:.4f}  ->",
-          "DIFFERENT" if p_anova < 0.05 else "no significant difference")
+# 7.3 CATEGORICAL-vs-NUMERICAL HYPOTHESIS TESTS (teammate's analysis) ---------
+# Question: does mean CO2 differ between the groups of each categorical variable?
+# Tests used: One-way ANOVA -> Tukey HSD post-hoc -> Levene's test -> Welch t-test
+# -> boxplots -> Emission Level counts.
+print("\n" + "=" * 70)
+print("7.3 CATEGORICAL VARIABLE ANALYSIS (ANOVA, Tukey, Levene, t-test)")
+print("=" * 70)
 
-# Two-sample t-test example: Heavy traffic vs Free flow
-a = df.loc[df['Traffic Conditions'] == 'Heavy', 'CO2 Emissions']
-b = df.loc[df['Traffic Conditions'] == 'Free flow', 'CO2 Emissions']
-t_stat, p_t = stats.ttest_ind(a, b, equal_var=False)    # Welch's t-test
-print(f"\n    t-test CO2: Heavy vs Free flow  t = {t_stat:.3f}, p = {p_t:.4f}")
+ALPHA = 0.05                       # significance level: p < 0.05 -> "significant"
+OUTPUT_DIR = "outputs"             # same folder where all other graphs are saved
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# The 4 genuine categorical (input) variables
+categorical_variables = [
+    "Vehicle Type",
+    "Fuel Type",
+    "Road Type",
+    "Traffic Conditions",
+]
+
+# 'target' (= 'CO2 Emissions') was already defined in STEP 5, so we reuse it.
+
+# Emission Level is included in the ANOVA only if it exists in the data.
+# CAUTION: if Emission Level is derived from CO2 (e.g. Low/Medium/High bins),
+# this test is circular and will be "significant" by construction. It is kept
+# for completeness but excluded from post-hoc tests and boxplots.
+anova_variables = list(categorical_variables)         # copy of the list
+if "Emission Level" in df.columns:
+    anova_variables.append("Emission Level")
+
+
+# ------------------------------------------------------------
+# 7.3.1 DISTRIBUTION OF CATEGORICAL VARIABLES
+# ------------------------------------------------------------
+print("\n" + "-" * 60)
+print("7.3.1 CATEGORICAL VARIABLE DISTRIBUTIONS")
+print("-" * 60)
+
+for column in categorical_variables:
+    print(f"\n{column}:")
+    print(df[column].value_counts())      # how many vehicles in each category
+    print()
+
+
+# ------------------------------------------------------------
+# 7.3.2 ONE-WAY ANOVA
+# H0: all group means are equal. p < alpha -> at least one group differs.
+# ------------------------------------------------------------
+print("\n" + "-" * 60)
+print("7.3.2 ONE-WAY ANOVA")
+print("-" * 60)
+
+anova_results = []                         # empty list; we add one result per variable
+
+for column in anova_variables:
+
+    data = df[[column, target]].dropna()   # keep only the 2 columns we need
+
+    # Split CO2 values into one array per group (e.g. Bus, Car, Motorcycle, Truck)
+    groups = [
+        group[target].values
+        for _, group in data.groupby(column)
+    ]
+
+    # f_oneway compares the group means: big F (and small p) = groups differ
+    f_statistic, p_value = stats.f_oneway(*groups)
+    significant = p_value < ALPHA
+
+    anova_results.append({
+        "Categorical Variable": column,
+        "Target Variable": target,
+        "F-statistic": f_statistic,
+        "p-value": p_value,
+        "Significant (alpha=0.05)": "Yes" if significant else "No",
+    })
+
+    print(f"\n{column} -> {target}")
+
+    print("\nGroup statistics:")
+    print(
+        data.groupby(column)[target]
+        .agg(["count", "mean", "std"])
+        .round(3)
+    )
+
+    print(f"\nF-statistic: {f_statistic:.4f}")
+    print(f"p-value: {p_value:.6g}")
+
+    if significant:
+        print("Result: DIFFERENT - significant difference between groups.")
+    else:
+        print("Result: No statistically significant difference between groups.")
+
+# Save all ANOVA results as a CSV table (can be pasted into the report)
+anova_df = pd.DataFrame(anova_results)
+anova_output = os.path.join(OUTPUT_DIR, "anova_results.csv")
+anova_df.to_csv(anova_output, index=False)
+print("\nANOVA results saved to:", anova_output)
+
+
+# ------------------------------------------------------------
+# 7.3.3 TUKEY HSD POST-HOC (for every significant ANOVA variable)
+# ANOVA only says "some group differs". Tukey says WHICH pairs differ.
+# ------------------------------------------------------------
+print("\n" + "-" * 60)
+print("7.3.3 TUKEY HSD POST-HOC TEST")
+print("-" * 60)
+
+significant_vars = [
+    row["Categorical Variable"]
+    for row in anova_results
+    if row["p-value"] < ALPHA
+    and row["Categorical Variable"] in categorical_variables  # skip Emission Level
+]
+
+if not significant_vars:
+    print("\nNo significant variables, so no post-hoc tests were run.")
+
+for column in significant_vars:
+
+    tukey_data = df[[column, target]].dropna()
+
+    tukey_result = pairwise_tukeyhsd(
+        endog=tukey_data[target],          # the numbers (CO2)
+        groups=tukey_data[column],         # the group labels
+        alpha=ALPHA,
+    )
+
+    print(f"\nTukey HSD: {column} -> {target}")
+    print(tukey_result)
+
+    safe_name = column.replace(" ", "_").lower()
+    tukey_output = os.path.join(OUTPUT_DIR, f"tukey_{safe_name}_results.txt")
+
+    with open(tukey_output, "w") as f:
+        f.write(str(tukey_result))
+
+    print("Tukey results saved to:", tukey_output)
+
+
+# ------------------------------------------------------------
+# 7.3.4 ANOVA ASSUMPTION CHECK (Levene's test)
+# ANOVA assumes every group has a similar spread (variance).
+# H0: variances are equal. p < alpha -> variances differ.
+# ------------------------------------------------------------
+print("\n" + "-" * 60)
+print("7.3.4 ANOVA ASSUMPTION CHECKS")
+print("-" * 60)
+
+levene_results = []
+
+for column in categorical_variables:
+
+    data = df[[column, target]].dropna()
+
+    groups = [
+        group[target].values
+        for _, group in data.groupby(column)
+    ]
+
+    levene_stat, levene_p = stats.levene(*groups, center="median")
+
+    levene_results.append({
+        "Categorical Variable": column,
+        "Levene statistic": levene_stat,
+        "p-value": levene_p,
+        "Equal variances plausible": "No" if levene_p < ALPHA else "Yes",
+    })
+
+    print(f"\n{column} -> {target}")
+    print(f"Levene statistic: {levene_stat:.4f}")
+    print(f"Levene p-value: {levene_p:.6g}")
+
+    if levene_p < ALPHA:
+        print("Result: Variances are significantly different.")
+        print("Note: consider Welch's ANOVA or Kruskal-Wallis for this variable.")
+    else:
+        print("Result: No significant evidence of unequal variances.")
+
+pd.DataFrame(levene_results).to_csv(
+    os.path.join(OUTPUT_DIR, "levene_results.csv"), index=False
+)
+
+
+# ------------------------------------------------------------
+# 7.3.5 TWO-SAMPLE WELCH T-TEST: Heavy traffic vs Free flow
+# Welch's version does not assume equal variances in the two groups.
+# ------------------------------------------------------------
+print("\n" + "-" * 60)
+print("7.3.5 WELCH T-TEST: HEAVY vs FREE FLOW TRAFFIC")
+print("-" * 60)
+
+a = df.loc[df["Traffic Conditions"] == "Heavy", target].dropna()
+b = df.loc[df["Traffic Conditions"] == "Free flow", target].dropna()
+
+if len(a) < 2 or len(b) < 2:
+    print(
+        "\nSkipped: need at least 2 rows in each of 'Heavy' and 'Free flow'. "
+        "Check the exact labels in Traffic Conditions:"
+    )
+    print(df["Traffic Conditions"].unique())
+else:
+    t_stat, p_t = stats.ttest_ind(a, b, equal_var=False)  # Welch's t-test
+
+    print(f"\nHeavy:     n = {len(a)}, mean = {a.mean():.3f}, std = {a.std():.3f}")
+    print(f"Free flow: n = {len(b)}, mean = {b.mean():.3f}, std = {b.std():.3f}")
+    print(f"\nt = {t_stat:.3f}, p = {p_t:.6g}")
+
+    if p_t < ALPHA:
+        print("Result: DIFFERENT - significant difference in mean CO2.")
+    else:
+        print("Result: No significant difference in mean CO2.")
+
+    pd.DataFrame([{
+        "Comparison": "Heavy vs Free flow",
+        "Test": "Welch t-test",
+        "n (Heavy)": len(a),
+        "n (Free flow)": len(b),
+        "Mean (Heavy)": a.mean(),
+        "Mean (Free flow)": b.mean(),
+        "t-statistic": t_stat,
+        "p-value": p_t,
+        "Significant (alpha=0.05)": "Yes" if p_t < ALPHA else "No",
+    }]).to_csv(os.path.join(OUTPUT_DIR, "ttest_heavy_vs_free_flow.csv"), index=False)
+
+
+# ------------------------------------------------------------
+# 7.3.6 BOX PLOTS: CO2 by each categorical variable
+# ------------------------------------------------------------
+print("\n" + "-" * 60)
+print("7.3.6 GENERATING BOXPLOTS")
+print("-" * 60)
+
+for column in categorical_variables:
+
+    plt.figure(figsize=(10, 6))
+
+    df.boxplot(column=target, by=column)   # one box per category
+
+    plt.title(f"CO2 Emissions by {column}")
+    plt.suptitle("")                       # remove pandas' automatic extra title
+    plt.xlabel(column)
+    plt.ylabel("CO2 Emissions")
+
+    plt.xticks(rotation=30)
+    plt.tight_layout()
+
+    safe_name = column.replace(" ", "_")
+    output_file = os.path.join(OUTPUT_DIR, f"boxplot_CO2_by_{safe_name}.png")
+
+    plt.savefig(output_file, dpi=300)
+    plt.close()                            # close the figure (saved to file only)
+
+    print("Saved:", output_file)
+
+
+# ------------------------------------------------------------
+# 7.3.7 EMISSION LEVEL DISTRIBUTION
+# ------------------------------------------------------------
+print("\n" + "-" * 60)
+print("7.3.7 EMISSION LEVEL DISTRIBUTION")
+print("-" * 60)
+
+if "Emission Level" in df.columns:
+
+    emission_counts = df["Emission Level"].value_counts()
+    print(emission_counts)
+
+    emission_counts.to_csv(
+        os.path.join(OUTPUT_DIR, "emission_level_distribution.csv")
+    )
+else:
+    print("No 'Emission Level' column found; skipped.")
+
+print("\nCategorical analysis (7.3) completed.\n")
 
 # 7.4 MULTIPLE LINEAR REGRESSION using matrix algebra (normal equations) -----
 # Model: y = b0 + b1*x1 + ... + b9*x9
